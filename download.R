@@ -8,6 +8,8 @@ verify_envvar()
 
 # Functions ----
 
+between = function(x, a, b) x >= a & x < b
+
 check.account = function(account) {
   is.list(account) &&
     !is.null(account$id) &&
@@ -22,11 +24,19 @@ get.account = function(id, verbose = TRUE) {
     if (check.account(account)) return(account)
     if (isTRUE(verbose)) {
       message(sprintf("Account %s was not saved properly", id))
+      # If the account was moved, we are going to write the new location,
+      # not the old one.
+      file.remove(get.account.path(id))
     }
   } 
   if (isTRUE(verbose)) message(sprintf("Getting account %s", id))
   account = get_account(id, parse = FALSE)
-  stopifnot(is.null(account$moved))
+  if (!is.null(account$moved)) {
+    move = list(from = id, to = account$moved$id)
+    if (isTRUE(verbose)) message(sprintf("Account %s moved to %s", move$from, move$to))
+    write_json(move, get.move.path(move$from))
+    account = account$moved
+  }
   write_json(account, account.path)
   return(account)
 }
@@ -36,6 +46,7 @@ get.account.path = function(id) get.path(id, "accounts")
 # These could be CSV but let's keep the symmetry
 get.followers.path  = function(id) get.path(id, "followers")
 get.followings.path = function(id) get.path(id, "followings")
+get.move.path = function(id) get.path(id, "moves")
 
 write.account.or.not = function(account) {
   path = get.account.path(account$id)
@@ -71,30 +82,39 @@ get.follows = function(id, limit = 40L, what, verbose = TRUE) {
     tac = Sys.time()
     elapsed = difftime(tac, tic, units = "secs")
     if (rtoot:::break_process_request(api_response, TRUE, verbose)) break
-    if (elapsed < 1) Sys.sleep(1)
+    Sys.sleep(1)
     max_id = attr(api_response, "headers")$max_id
   }
   if (verbose) cat("\n")
   ids = unlist(ids)
-  l = switch(what, 
-             followings = list(from = id, to = ids),
-             followers =  list(from = ids, to = id))
+  if (is.null(ids) || (length(ids) == 9)) {
+    l = list(from = character(0), to = character(0))
+  } else {
+    l = switch(what, 
+               followings = list(from = id, to = ids),
+               followers =  list(from = ids, to = id))
+  }
   write_json(l, follows.path)
   return(ids)
 }
 
 # Proceed ----
 
+invisible(sapply(
+  c("accounts", "followings", "followers", "moves"),
+  \(x) if(!dir.exists(x)) dir.create(x)
+))
 my.account = get.account(my.id)
 my.followings.id = get.follows(my.id, my.account$following_count, "followings")
 my.followers.id = get.follows(my.id, my.account$followers_count, "followers")
 follows = unique(c(my.followings.id, my.followers.id))
 global.pb = txtProgressBar(max = length(follows), style = 3)
 for (i in seq_along(follows)) {
-  id = follows[i]
-  account = get.account(id)
-  followings.id = get.follows(id, account$following_count, "followings")
-  followers.id = get.follows(id, account$followers_count, "followers")
+  account = get.account(follows[i])
+  if (between(account$following_count, 2400L, 4800L)) 
+    followings.id = get.follows(account$id, account$following_count, "followings")
+  if (between(account$followers_count, 2400L, 4800L))
+    followers.id = get.follows(account$id, account$followers_count, "followers")
   setTxtProgressBar(global.pb, i)
 }
 close(global.pb)
