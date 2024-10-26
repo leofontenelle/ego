@@ -111,9 +111,9 @@ follows = unique(c(my.followings.id, my.followers.id))
 global.pb = txtProgressBar(max = length(follows), style = 3)
 for (i in seq_along(follows)) {
   account = get.account(follows[i])
-  if (between(account$following_count, 2400L, 4800L)) 
+  if (between(account$following_count, 1200L * 16L, 1200L * 32L)) 
     followings.id = get.follows(account$id, account$following_count, "followings")
-  if (between(account$followers_count, 2400L, 4800L))
+  if (between(account$followers_count, 1200L * 16L, 1200L * 32L))
     followers.id = get.follows(account$id, account$followers_count, "followers")
   setTxtProgressBar(global.pb, i)
 }
