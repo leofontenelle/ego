@@ -72,17 +72,20 @@ get.follows = function(id, limit = 40L, what, verbose = TRUE) {
   page.size = 40L
   pages = ceiling(limit/page.size)
   if (pages < 2) verbose = FALSE
-  if (verbose) pb = txtProgressBar(min = 0, max = pages, style = 3)
+  if (verbose) {
+    pb = txtProgressBar(min = 0, max = pages, style = 3)
+    message(sprintf("\nDownloading %s of %s", what, id))
+  }
   ids = vector(mode = "list", length = pages)
   for (i in seq.int(pages)) {
-    tic = Sys.time()
+    # tic = Sys.time()
     api_response = fun(id, max_id, parse = FALSE)
     ids[[i]] = sapply(api_response, write.account.or.not)
     if (verbose) setTxtProgressBar(pb, i)
-    tac = Sys.time()
-    elapsed = difftime(tac, tic, units = "secs")
+    # tac = Sys.time()
+    # elapsed = difftime(tac, tic, units = "secs")
+    Sys.sleep(5)
     if (rtoot:::break_process_request(api_response, TRUE, verbose)) break
-    Sys.sleep(1)
     max_id = attr(api_response, "headers")$max_id
   }
   if (verbose) cat("\n")
@@ -108,14 +111,55 @@ my.account = get.account(my.id)
 my.followings.id = get.follows(my.id, my.account$following_count, "followings")
 my.followers.id = get.follows(my.id, my.account$followers_count, "followers")
 follows = unique(c(my.followings.id, my.followers.id))
-global.pb = txtProgressBar(max = length(follows), style = 3)
-for (i in seq_along(follows)) {
+
+# Make it so we can resume where the 503 error stopped us
+whereami = list(i = NULL, what = NULL, page = NULL, max_id = NULL)
+if (file.exists("whereami.rds")) whereami = readRDS("whereami.rds")
+ids = NULL
+if (file.exists("ids.rds")) ids = readRDS("ids.rds")
+
+for (i in (whereami$i %||% 1):length(follows)) {
+  whereami$i = i; saveRDS(whereami, "whereami.rds")
   account = get.account(follows[i])
-  if (between(account$following_count, 1200L * 16L, 1200L * 32L)) 
-    followings.id = get.follows(account$id, account$following_count, "followings")
-  if (between(account$followers_count, 1200L * 16L, 1200L * 32L))
-    followers.id = get.follows(account$id, account$followers_count, "followers")
-  setTxtProgressBar(global.pb, i)
+  if (interactive()) message(sprintf("Downloading follows for %s (%d of %d)", account$id, i, length(follows)))
+  for (what in c("followings", "followers")) {
+    if (what == "followings" && !is.null(whereami$what) && whereami$what == "followers") next
+    whereami$what = what; saveRDS(whereami, "whereami.rds")
+    count = switch(what, followings = account$following_count, followers = account$followers_count)
+    if (count < 1200L * 32L) next
+    follows.path = get.path(account$id, what)
+    if (file.exists(follows.path)) next
+    fun = switch(what, followings = get_account_following, followers = get_account_followers)
+    pages = ceiling(count/40L)
+    if (is.null(ids)) ids = vector(mode = "list", length = pages)
+    if (interactive()) pb = txtProgressBar(min = 0, max = pages, style = 3)
+    starting.page = whereami$page %||% 1
+    for (page in starting.page:pages) {
+      whereami$page = page; saveRDS(whereami, "whereami.rds")
+      api_response = fun(account$id, whereami$max_id, parse = FALSE)
+      ids[[page]] = sapply(api_response, write.account.or.not); saveRDS(ids, "ids.rds")
+      if (interactive()) setTxtProgressBar(pb, page)
+      Sys.sleep(2)
+      if (rtoot:::break_process_request(api_response, TRUE, verbose)) break
+      whereami$max_id = attr(api_response, "headers")$max_id; saveRDS(whereami, "whereami.rds")
+    }
+    whereami$max_id = NULL; saveRDS(whereami, "whereami.rds")
+    whereami$page = NULL; saveRDS(whereami, "whereami.rds")
+    if (interactive()) {close(pb); cat("\n")}
+    ids = unlist(ids); saveRDS(ids, "ids.rds")
+    if (is.null(ids) || (length(ids) == 0)) {
+      l = list(from = character(0), to = character(0))
+    } else {
+      l = switch(what,
+                 followings = list(from=account$id, to=ids),
+                 followers =  list(from=ids, to=account$id))
+    }
+    write_json(l, follows.path)
+    ids = NULL; saveRDS(ids, "ids.rds")
+  }
+  whereami$what = NULL
+  if (identical(i, length(follows))) whereami$i = NULL
+  saveRDS(whereami, "whereami.rds")
 }
-close(global.pb)
-cat("\n")
+
+# What about accounts with 9 followers or 9 followings?
