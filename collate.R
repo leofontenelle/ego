@@ -70,7 +70,7 @@ write.account.or.not = function(account) {
 
 # Proceed ---
 
-if (interactive()) message("Setting up"))
+if (interactive()) message("Setting up")
 
 moves = dir_ls("moves", glob = "*.json") |> 
   sapply(fromJSON, simplify = FALSE) |> 
@@ -97,7 +97,7 @@ stopifnot(all(file.exists(accounts.path)),
         all(file.exists(followings.path)),
         all(file.exists(followers.path)))
 
-if (interactive()) message("Collating a data.table of follows"))
+if (interactive()) message("Collating a data.table of follows")
 
 followings = followings.path |>
   _[file.exists(followings.path)] |> 
@@ -120,6 +120,7 @@ follows[!is.na(m1$to), from := m1[!is.na(to), to]]
 m2 = moves[follows, on = c(from="to")]
 follows[!is.na(m2$to), to := m2[!is.na(to), to]]
 rm(followings, followers, m1, m2)
+follows = unique(follows)
 
 all.id = unique(c(follows$from, follows$to))
 all.account.path = get.account.path(all.id)
