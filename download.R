@@ -8,8 +8,6 @@ verify_envvar()
 
 # Functions ----
 
-between = function(x, a, b) x >= a & x < b
-
 check.account = function(account) {
   is.list(account) &&
     !is.null(account$id) &&
@@ -35,6 +33,7 @@ get.account = function(id, verbose = TRUE) {
     move = list(from = id, to = account$moved$id)
     if (isTRUE(verbose)) message(sprintf("Account %s moved to %s", move$from, move$to))
     write_json(move, get.move.path(move$from))
+    account.path = get.account.path(account$moved$id)
     account = account$moved
   }
   write_json(account, account.path)
@@ -90,7 +89,7 @@ get.follows = function(id, limit = 40L, what, verbose = TRUE) {
   }
   if (verbose) cat("\n")
   ids = unlist(ids)
-  if (is.null(ids) || (length(ids) == 9)) {
+  if (is.null(ids) || (length(ids) == 0)) {
     l = list(from = character(0), to = character(0))
   } else {
     l = switch(what, 
@@ -126,7 +125,6 @@ for (i in (whereami$i %||% 1):length(follows)) {
     if (what == "followings" && !is.null(whereami$what) && whereami$what == "followers") next
     whereami$what = what; saveRDS(whereami, "whereami.rds")
     count = switch(what, followings = account$following_count, followers = account$followers_count)
-    if (count < 1200L * 32L) next
     follows.path = get.path(account$id, what)
     if (file.exists(follows.path)) next
     fun = switch(what, followings = get_account_following, followers = get_account_followers)
@@ -161,5 +159,3 @@ for (i in (whereami$i %||% 1):length(follows)) {
   if (identical(i, length(follows))) whereami$i = NULL
   saveRDS(whereami, "whereami.rds")
 }
-
-# What about accounts with 9 followers or 9 followings?
