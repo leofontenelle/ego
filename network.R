@@ -2,124 +2,61 @@
 
 library(data.table)
 library(igraph)
-library(jsonlite)
 my.id = "109399675152989746"
-
-account.colnames = c("id", "username", "acct", "display_name", 
-                     "locked", "bot", "created_at", 
-                     "followers_count", "following_count", "statuses_count")
 
 # Ancillary functions ----
 
-get.path = function(id, folder) file.path(folder, sprintf("%s.json", id))
-get.account.path = function(id) get.path(id, "accounts")
-# These could be CSV but let's keep the symmetry
-get.followers.path  = function(id) get.path(id, "followers")
-get.followings.path = function(id) get.path(id, "followings")
-
-check.account = function(account) {
-  is.list(account) &&
-    !is.null(account$id) &&
-    !is.null(account$following_count) &&
-    !is.null(account$followers_count)
-}
-
-fake.account = function(id) {
-  l = vector("list", length(account.colnames))
-  names(l) = account.colnames
-  l$id = id
-  return(l)
-}
-
-get.account = function(id) {
-  account.path = get.account.path(id)
-  if (!file.exists(account.path)) {
-    warning(sprintf("%s does not exist", account.path))
-    return(fake.account(id))
-  }
-  account = fromJSON(account.path)
-  if (!isTRUE(check.account(account))) {
-    warning(sprintf("%s is invalid", account.path))
-    return(fake.account(id))
-  }
-  return(account[account.colnames])
-}
-
-get.follows = function(id, what) {
-  stopifnot(what %in% c("followings", "followers"))
-  follows.path = get.path(id, what)
-  if (!file.exists(follows.path)) {
-    warning(sprintf("%s does not exist", follows.path))
-    return(data.table(from = character(0), to = character(0)))
-  }
-  follows = as.data.table(fromJSON(follows.path))
-  return(follows)
+tabulate.instances = function(dt) {
+	setorder(dt[, .N, by = instance][, prop := N/sum(N)], -"N")[, cum := cumsum(prop)][, i := .I]
 }
 
 # Read data ----
 
-my.followings = get.follows(my.id, "followings")
-my.followers = get.follows(my.id, "followers")
+accounts = fread(file.path("data", "accounts.csv"), 
+                 colClasses = c(id = "character"), 
+                 key = "id")
+accounts[acct %flike% "@", instance := sub("[^@]+@([^@]+)", "\\1", acct)]
+accounts[is.na(instance), instance := "mastodon.social"]
 
-ids = unique(c(my.followings$to, my.followers$from))
-nodes = rbindlist(lapply(ids, get.account), fill = TRUE)
+follows = fread(file.path("data", "follows.csv"), 
+                colClasses = list(character = c("from", "to")),
+                key = c("from", "to"))
+stopifnot(anyDuplicated(follows) == 0)
 
-n_edges = sum(nodes$followers_count, nodes$following_count, na.rm = TRUE)
-edges = rbind(my.followings,
-              my.followers,
-              data.table(from = character(n_edges), 
-                         to = character(n_edges)))
-i = nrow(my.followings) + nrow(my.followers)
-if (interactive()) {
-  message("Reading follows")
-  pb = txtProgressBar(max = nrow(nodes), initial = i, style = 3)
-}
-for (id in nodes$id) {
-  # Followings
-  e = get.follows(id, "followings")
-  stopifnot(is.data.table(e))
-  if (nrow(e) > 0L) {
-    new.i = i + nrow(e)
-    edges[i:(new.i-1), c("from", "to") := e]
-    i = new.i
-  }
-  # Followers
-  e = get.follows(id, "followers")
-  stopifnot(is.data.table(e))
-  if (nrow(e) > 0L) {
-    new.i = i + nrow(e)
-    edges[i:(new.i-1), c("from", "to") := e]
-    i = new.i
-  }
-  if (interactive()) setTxtProgressBar(pb, i)
-}
-if (interactive()) {
-  close(pb)
-  cat("\n")
-}
+accounts[, node := .I]
+follows[, from.node := accounts[from, node]]
+follows[, to.node := accounts[to, node]]
 
-ids = sort(unique(c(edges$to, edges$from)))
-ids = ids[ids != ""]
-nodes = sapply(account.colnames, \(x) character(length(ids)), simplify = FALSE)
-setDT(nodes)
-nodes[, id := ids]
-setkey(nodes, id)
-# nodes[, (account.colnames) := get.account(id), keyby = "id"]
+accounts[my.id, core := TRUE]
+accounts[follows[my.id, to, on = "from"], my.following := TRUE]
+accounts[follows[my.id, to, on = "from"], core := TRUE]
+accounts[follows[my.id, from, on = "to"], my.follower := TRUE]
+accounts[follows[my.id, from, on = "to"], core := TRUE]
+# These stats are only available for me and level 1 nodes
+accounts[(core), followings := follows[, .N, by = "from"][accounts[(core), id], N, on = "from"]]
+accounts[(core), followers := follows[, .N, by = "to"][accounts[(core), id], N, on = "to"]]
 
-not.id = account.colnames[account.colnames != "id"]
-if (interactive()) {
-  message("Reading accounts")
-  pb = txtProgressBar(max = nrow(nodes), style = 3)
-}
-for (i in seq_len(nrow(nodes))) {
-  id = nodes[i, id]
-  account = get.account(id)
-  if (!check.account(account)) next
-  nodes[id, (not.id) := account[not.id]]
-  if (interactive()) setTxtProgressBar(pb, i)
-}
-if (interactive()) {
-  close(pb)
-  cat("\n")
-}
+# Describe data ----
 
+# instances = tabulate.instances(accounts)
+instances = tabulate.instances(accounts[(core)])
+instances.followers = tabulate.instances(accounts[(my.follower)])
+instances.followings = tabulate.instances(accounts[(my.following)])
+instances.mutuals = tabulate.instances(accounts[(my.following & my.follower)])
+
+accounts[(core), instance.i := instances[accounts[(core), instance], i, on = "instance"]]
+
+# barplot(with(instances.core[1:10], setNames(N, instance)))
+
+
+# Build graph ----
+
+g = cbind(from = follows$to.node, to = follows$from.node) |>
+	graph_from_edgelist() |>
+	induced_subgraph(accounts[(core), node])
+cluster = cluster_infomap(g)
+accounts[(core), membership := cluster$membership]
+l = layout_in_circle(g, order = order(cluster$membership))
+plot(g, layout = l, # mark.groups = cluster,
+     vertex.size = 3, vertex.color = accounts[(core), instance.i], vertex.frame.color = NA_character_, vertex.label = NA_character_,
+     edge.width = 0.2, edge.arrow.size = 0.2, edge.arrow.witdh = 0.2, edge.curved = TRUE)
