@@ -4,6 +4,9 @@ library(data.table)
 library(igraph)
 my.id = "109399675152989746"
 
+brazilian.instances = readLines(file.path("data", "brasil.txt"))
+
+
 # Ancillary functions ----
 
 # i: integer vector
@@ -16,9 +19,15 @@ get.instance.color = function(instance.i, dt) {
 	return(colors[instance.i])
 }
 
+get.top.quantile = function(dt, quantile = 2/3) {
+	smallest.n = dt[cum <= quantile, last(N)]
+	dt[N >= smallest.n]
+}
+
 tabulate.instances = function(dt) {
 	setorder(dt[, .N, by = instance][, prop := N/sum(N)], -"N")[, cum := cumsum(prop)][, i := .I]
 }
+
 
 # Read data ----
 
@@ -76,6 +85,7 @@ g = graph_from_edgelist(cbind(from = follows$to.node, to = follows$from.node))
 g.core = induced_subgraph(g, accounts[(core), node])
 cluster = cluster_infomap(g)
 accounts[, membership := membership(cluster)]
+
 
 # Plot core graph ----
 
