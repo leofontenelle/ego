@@ -57,23 +57,27 @@ accounts[(my.following | my.follower), core := TRUE]
 followed.by.core = follows[from %in% accounts[(core), id], unique(to)]
 accounts[(core), keep := TRUE]
 accounts[followed.by.core, keep := TRUE]
+# Strap your belts, we are about to lose data
 accounts = accounts[(keep)][, keep := NULL]
-follows = follows[from %in% accounts[(core), id]]
-accounts[(core), followings := follows[, .N, by = "from"][accounts[(core), id], N, on = "from"]]
+follows = follows[from %in% accounts$id & to %in% accounts$id]
+
+accounts[(my.following &  my.follower), mutual := TRUE]
+accounts[, level := 2]
+accounts[(core), level := 1]
+accounts[my.id, level := 0]
+accounts[(my.following | my.follower), level1 := TRUE]
+accounts[, br.inst := instance %in% brazilian.instances]
 
 accounts[, node := .I]
 follows[, from.node := accounts[from, node]]
 follows[, to.node := accounts[to, node]]
 
-# instances = tabulate.instances(accounts)
 instances = tabulate.instances(accounts[(core)])
 instances.followers = tabulate.instances(accounts[(my.follower)])
 instances.followings = tabulate.instances(accounts[(my.following)])
 instances.mutuals = tabulate.instances(accounts[(my.following & my.follower)])
 
 accounts[(core), instance.i := instances[accounts[(core), instance], i, on = "instance"]]
-
-# barplot(with(instances[1:10], setNames(N, instance)))
 
 
 # Build graph ----
