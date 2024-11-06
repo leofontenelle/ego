@@ -9,6 +9,33 @@ brazilian.instances = readLines(file.path("data", "brasil.txt"))
 
 # Ancillary functions ----
 
+get.community.polygons = function(layout, membership) {
+	stopifnot(ncol(layout) == 2, nrow(layout) == length(membership))
+	inside = 1.10; outside = 1.15
+	l = layout[order(membership), ]
+	m = sort(membership)
+	res = vector("list", max(m))
+	for (i in unique(m)) {
+		x = subset(l, m == i)
+		res[[i]] = rbind(x * inside, x[nrow(x):1, ] * outside)
+	}
+	return(res)
+}
+
+get.community.colors = function(membership) {
+	pal = hcl.colors(1000, palette = "viridis")
+	res = rep(NA_character_, max(membership))
+	tbl = data.table(membership) |>
+		_[, .N, keyby = "membership"] |>
+		setorder(-"N") |>
+		_[, prop := N/sum(N)] |>
+		_[, cum := cumsum(prop)] |>
+		_[, midpoint := round((cum - prop/2) * 1000)] |>
+		_[, color := pal[midpoint]]
+	res[tbl$membership] = tbl$color
+	return(res)
+}
+
 # i: integer vector
 # dt: eg the 'instances' data.table
 # out: color vector, same length as i
@@ -22,6 +49,15 @@ get.instance.color = function(instance.i, dt) {
 get.top.quantile = function(dt, quantile = 2/3) {
 	smallest.n = dt[cum <= quantile, last(N)]
 	dt[N >= smallest.n]
+}
+
+plot.community.polygons = function(polygons, colors) {
+	stopifnot(length(polygons) == length(colors),
+	          all(sapply(polygons, is.null) == is.na(colors)))
+	for (i in seq_along(polygons)) {
+		if (is.null(polygons[[i]])) next
+		polygon(polygons[[i]], border = colors[i], col=paste0(colors[i], "E6"))
+	}
 }
 
 tabulate.instances = function(dt) {
@@ -41,10 +77,6 @@ follows = fread(file.path("data", "follows.csv"),
                 colClasses = list(character = c("from", "to")),
                 key = c("from", "to"))
 stopifnot(anyDuplicated(follows) == 0)
-
-# # These stats are only available for me and level 1 nodes
-# 
-# accounts[(core), followers := follows[, .N, by = "to"][accounts[(core), id], N, on = "to"]]
 
 # cluster_infomap takes forever with the whole graph, so let's keep only
 # me, level 1 nodes (my followings and followers) and accounts followed
@@ -104,6 +136,14 @@ V(g.core)$size = accounts[(core), size]
 V(g.core)$color = accounts[(core), color]
 V(g.core)$frame.color = accounts[(core), frame.color]
 
-l = layout_in_circle(g.core, order = accounts[(core), order(membership)])
-plot(g.core, layout = l, # mark.groups = cluster,
+circle = layout_in_circle(g.core, order = accounts[(core), order(membership)])
+community.polygons = get.community.polygons(circle, accounts[(core), membership])
+community.colors = get.community.colors(accounts[(core), membership])
+
+op = par(mar = rep(2.1, 4L))
+png(width = 1080, height = 1080, type = "cairo-png", antialias = "gray")
+plot(g.core, layout = circle, xlim = c(-1.2, 1.2), ylim = c(-1.2, 1.2),# mark.groups = cluster,
      edge.width = 0.1, edge.arrow.size = 0.1, edge.arrow.witdh = 0.1, edge.curved = TRUE)
+plot.community.polygons(community.polygons, community.colors)
+dev.off()
+par(op)
