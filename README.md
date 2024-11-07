@@ -1,4 +1,4 @@
-Just a playful attempt at analyzing my ego network on the Fediverse.
+Just a playful attempt at analyzing my ego network on the Fediverse. See the [blog post](https://blog.leonardof.med.br/2024/grafo-fediverso.html).
 
 - `data/`
   - `accounts.csv` — nodes
