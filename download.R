@@ -1,10 +1,8 @@
-# Initial set-up ----
-
 library(jsonlite)
 library(rtoot)
 my.id = "109399675152989746"
 
-verify_envvar()
+# verify_envvar()
 
 # Functions ----
 
@@ -14,6 +12,12 @@ check.account = function(account) {
     !is.null(account$following_count) &&
     !is.null(account$followers_count)
 }
+
+get.path = function(id, folder) file.path(folder, sprintf("%s.json", id))
+get.account.path = function(id) get.path(id, "accounts")
+get.followers.path  = function(id) get.path(id, "followers")
+get.followings.path = function(id) get.path(id, "followings")
+get.move.path = function(id) get.path(id, "moves")
 
 get.account = function(id, verbose = TRUE) {
   account.path = get.account.path(id)
@@ -26,7 +30,7 @@ get.account = function(id, verbose = TRUE) {
       # not the old one.
       file.remove(get.account.path(id))
     }
-  } 
+  }
   if (isTRUE(verbose)) message(sprintf("Getting account %s", id))
   account = get_account(id, parse = FALSE)
   if (!is.null(account$moved)) {
@@ -40,32 +44,19 @@ get.account = function(id, verbose = TRUE) {
   return(account)
 }
 
-get.path = function(id, folder) file.path(folder, sprintf("%s.json", id))
-get.account.path = function(id) get.path(id, "accounts")
-# These could be CSV but let's keep the symmetry
-get.followers.path  = function(id) get.path(id, "followers")
-get.followings.path = function(id) get.path(id, "followings")
-get.move.path = function(id) get.path(id, "moves")
-
-write.account.or.not = function(account) {
-  path = get.account.path(account$id)
-  if (!file.exists(path)) write_json(account, path)
-  return(account$id)
-}
-
 get.follows = function(id, limit = 40L, what, verbose = TRUE) {
   stopifnot(what %in% c("followings", "followers"))
   follows.path = get.path(id, what)
   if (file.exists(follows.path)) {
     l = fromJSON(follows.path)
-    ids = switch(what, followings = l$to, followers = l$from)
+    ids = switch(what, followings = l$following, followers = l$follower)
     if (length(ids) > 0) return(ids)
     if (isTRUE(verbose)) message(sprintf(
       "There are no %s for %s, downloading again just to be sure", what, id
     ))
   }
-  fun = switch(what, 
-               followings = get_account_following, 
+  fun = switch(what,
+               followings = get_account_following,
                followers = get_account_followers)
   max_id = NULL
   page.size = 40L
@@ -77,27 +68,30 @@ get.follows = function(id, limit = 40L, what, verbose = TRUE) {
   }
   ids = vector(mode = "list", length = pages)
   for (i in seq.int(pages)) {
-    # tic = Sys.time()
     api_response = fun(id, max_id, parse = FALSE)
     ids[[i]] = sapply(api_response, write.account.or.not)
     if (verbose) setTxtProgressBar(pb, i)
-    # tac = Sys.time()
-    # elapsed = difftime(tac, tic, units = "secs")
-    Sys.sleep(5)
+    Sys.sleep(3)
     if (rtoot:::break_process_request(api_response, TRUE, verbose)) break
     max_id = attr(api_response, "headers")$max_id
   }
   if (verbose) cat("\n")
   ids = unlist(ids)
   if (is.null(ids) || (length(ids) == 0)) {
-    l = list(from = character(0), to = character(0))
+    l = list(follower = character(0), following = character(0))
   } else {
-    l = switch(what, 
-               followings = list(from = id, to = ids),
-               followers =  list(from = ids, to = id))
+    l = switch(what,
+               followings = list(follower = id, following = ids),
+               followers =  list(follower = ids, following = id))
   }
   write_json(l, follows.path)
   return(ids)
+}
+
+write.account.or.not = function(account) {
+  path = get.account.path(account$id)
+  if (!file.exists(path)) write_json(account, path)
+  return(account$id)
 }
 
 # Proceed ----
@@ -126,7 +120,15 @@ for (i in (whereami$i %||% 1):length(follows)) {
     whereami$what = what; saveRDS(whereami, "whereami.rds")
     count = switch(what, followings = account$following_count, followers = account$followers_count)
     follows.path = get.path(account$id, what)
-    if (file.exists(follows.path)) next
+    if (file.exists(follows.path)) {
+      next
+    } else if (count == 0) {
+      # code duplication to avoid deep nesting
+      l = list(from = character(0), to = character(0))
+      write_json(l, follows.path)
+      ids = NULL; saveRDS(ids, "ids.rds")
+      next
+    }
     fun = switch(what, followings = get_account_following, followers = get_account_followers)
     pages = ceiling(count/40L)
     if (is.null(ids)) ids = vector(mode = "list", length = pages)
@@ -137,7 +139,7 @@ for (i in (whereami$i %||% 1):length(follows)) {
       api_response = fun(account$id, whereami$max_id, parse = FALSE)
       ids[[page]] = sapply(api_response, write.account.or.not); saveRDS(ids, "ids.rds")
       if (interactive()) setTxtProgressBar(pb, page)
-      Sys.sleep(2)
+      Sys.sleep(3)
       if (rtoot:::break_process_request(api_response, TRUE, verbose)) break
       whereami$max_id = attr(api_response, "headers")$max_id; saveRDS(whereami, "whereami.rds")
     }
@@ -149,8 +151,8 @@ for (i in (whereami$i %||% 1):length(follows)) {
       l = list(from = character(0), to = character(0))
     } else {
       l = switch(what,
-                 followings = list(from=account$id, to=ids),
-                 followers =  list(from=ids, to=account$id))
+                 followings = list(follower=account$id, following=ids),
+                 followers =  list(follower=ids, following=account$id))
     }
     write_json(l, follows.path)
     ids = NULL; saveRDS(ids, "ids.rds")
